@@ -2,7 +2,7 @@ from cgitb import text
 import difflib
 from turtle import position
 import pandas as pd
-import logging
+import logging # บันทึกสถานะการทำงาน
 import sys
 import os
 import re
@@ -12,7 +12,7 @@ import json
 from datetime import datetime
 import csv
 import random
-from selenium import webdriver
+from selenium import webdriver #สำหรับการโหลดหน้าเว็บแบบไดนามิก
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -22,7 +22,10 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional, Tuple
 
 
-# Configure logging
+"""
+การตั้งค่า OLLAMA API: กำหนดพอร์ต URL และชื่อโมเดลสำหรับ API ของ OLLAMA 
+ซึ่งในโค้ดส่วนที่เหลือ ไม่ได้มีการเรียกใช้จริง (เป็นโค้ดที่เตรียมไว้สำหรับการใช้งาน LLM ภายหลัง)
+"""
 port = 11434
 OLLAMA_API_URL = f"http://localhost:{port}/api/generate"
 OLLAMA_MODEL = "llama3.2"
@@ -31,42 +34,165 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # 
 
 
-class IntelligentKBankScraper:
-    """Web scraper for Bank executives - FIXED NAME PARSING VERSION"""
-    
-    def __init__(self, base_url="https://www.kasikornbank.com/th/about/Pages/executives.aspx"):
+class FlexibleBankScraper:
+    """Universal web scraper for Thai bank executives - Works with multiple banks"""
+
+    def __init__(self, base_url): #store as the name said
         self.base_url = base_url
         self.driver = None
         self.bank_name = None
         self.busi_dt = datetime.now().strftime("%Y-%m-%d")
-        # Store exact HTML strings with positions
-        self.verified_executives = []  # List of (name, position) tuples from HTML
+        self.verified_executives = []
 
-    def detect_bank_name(self, url: str) -> str:
-        """Detect bank name from URL"""
+
+    def detect_bank_name(self, url: str, html_content: Optional[str] = None) -> str:
+        #ตรวจจับชื่อธนาคารจาก URL หรือเนื้อหาหน้าเว็บหากมี
         url_lower = url.lower()
         
+        logging.info(f"\n{'='*80}")
+        logging.info(f"🔍 BANK DETECTION DEBUG")
+        logging.info(f"{'='*80}")
+        logging.info(f"🔗 URL: {url}")
+        logging.info(f"🔗 URL (lowercase): {url_lower}")
+        
+        # Extended bank keyword mapping
         bank_keywords = {
+            # ธนาคารกรุงเทพ
+            'bangkokbank.com': 'ธนาคารกรุงเทพ',
+            'bangkokbank': 'ธนาคารกรุงเทพ',
+            'bbl.co.th': 'ธนาคารกรุงเทพ',
+            'bbl': 'ธนาคารกรุงเทพ',
+            
+            # ธนาคารกสิกรไทย
+            'kasikornbank': 'ธนาคารกสิกรไทย',
             'kasikorn': 'ธนาคารกสิกรไทย',
             'kbank': 'ธนาคารกสิกรไทย',
-            'bangkokbank': 'ธนาคารกรุงเทพ',
-            'bbl': 'ธนาคารกรุงเทพ',
+            
+            # ธนาคารไทยพาณิชย์
             'scb': 'ธนาคารไทยพาณิชย์',
+            'scb.co.th': 'ธนาคารไทยพาณิชย์',
+            'siamcommercial': 'ธนาคารไทยพาณิชย์',
+            
+            # ธนาคารกรุงไทย
             'ktb': 'ธนาคารกรุงไทย',
+            'krungthai': 'ธนาคารกรุงไทย',
+            'ktb.co.th': 'ธนาคารกรุงไทย',
+            
+            # ธนาคารกรุงศรีอยุธยา
             'krungsri': 'ธนาคารกรุงศรีอยุธยา',
+            'krungsri.com': 'ธนาคารกรุงศรีอยุธยา',
+            'baya': 'ธนาคารกรุงศรีอยุธยา',
+            
+            # ธนาคารทหารไทยธนชาต
+            'ttb': 'ธนาคารทหารไทยธนชาต',
+            'tmbthanachart': 'ธนาคารทหารไทยธนชาต',
+            
+            # ธนาคารเกียรตินาคินภัทร
+            'kiatnakin': 'ธนาคารเกียรตินาคินภัทร',
+            'kkp': 'ธนาคารเกียรตินาคินภัทร',
+            
+            # ธนาคารธนชาต
+            'thanachart': 'ธนาคารธนชาต',
+            
+            # ธนาคารทิสโก้
+            'tisco': 'ธนาคารทิสโก้',
+            
+            # ธนาคารไอซีบีซี (ไทย)
+            'icbc': 'ธนาคารไอซีบีซี (ไทย)',
+            
+            # ธนาคารซีไอเอ็มบี ไทย
+            'cimb': 'ธนาคารซีไอเอ็มบี ไทย',
         }
         
+        # First > try ตรวจจับจาก URL: วนลูปใน Dictionary หากพบ KeywordในURLจะreturnชื่อธนาคารทันที
         for keyword, bank_name in bank_keywords.items():
             if keyword in url_lower:
+                logging.info(f"✅ MATCH FOUND!")
+                logging.info(f"   Keyword: '{keyword}'")
+                logging.info(f"   Bank: {bank_name}")
+                logging.info(f"{'='*80}\n")
                 return bank_name
+        
+        logging.warning(f"⚠️ No bank detected from URL!")
+        logging.warning(f"⚠️ Checking page content...\n")
+
+        # Second > try ตรวจจับจากเนื้อหา HTML: 
+        # หากไม่พบจาก URL จะใช้ BeautifulSoup วิเคราะห์ Title Tag, Meta Tags, และ ชื่อไทยในข้อความหน้าเว็บ
+
+        if html_content:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Check title tag
+            title = soup.find('title')
+            if title:
+                title_text = title.get_text().lower()
+                for keyword, bank_name in bank_keywords.items():
+                    if keyword in title_text:
+                        logging.info(f"🏦 Bank detected from page title: {bank_name}")
+                        return bank_name
+            
+            # Check meta tags
+            meta_tags = soup.find_all('meta', attrs={'name': ['description', 'title', 'og:title']})
+            for meta in meta_tags:
+                content = meta.get('content', '').lower()
+                for keyword, bank_name in bank_keywords.items():
+                    if keyword in content:
+                        logging.info(f"🏦 Bank detected from meta tags: {bank_name}")
+                        return bank_name
+            
+            # Check for Thai bank names in page content
+            page_text = soup.get_text()
+            
+            thai_bank_exact = {
+                'ธนาคารกรุงเทพ': 'ธนาคารกรุงเทพ',
+                'กรุงเทพ': 'ธนาคารกรุงเทพ',
+                'Bangkok Bank': 'ธนาคารกรุงเทพ', # blocked
+
+                'ธนาคารกสิกรไทย': 'ธนาคารกสิกรไทย',
+                'กสิกรไทย': 'ธนาคารกสิกรไทย',
+                'KASIKORNBANK': 'ธนาคารกสิกรไทย', # test already
+
+                'ธนาคารไทยพาณิชย์': 'ธนาคารไทยพาณิชย์',
+                'ไทยพาณิชย์': 'ธนาคารไทยพาณิชย์', # test already
+
+                'ธนาคารกรุงไทย': 'ธนาคารกรุงไทย',
+                'กรุงไทย': 'ธนาคารกรุงไทย', # blocked
+
+                'ธนาคารออมสิน': 'ธนาคารออมสิน',
+                'ออมสิน': 'ธนาคารออมสิน',
+                'gsb': 'ธนาคารออมสิน', # test already
+
+                'ธนาคารกรุงศรีอยุธยา': 'ธนาคารกรุงศรีอยุธยา',
+                'กรุงศรีอยุธยา': 'ธนาคารกรุงศรีอยุธยา', # test already
+
+            }
+            
+            for thai_keyword, bank_name in thai_bank_exact.items():
+                if thai_keyword in page_text:
+                    logging.info(f"✅ Bank detected from page Thai text '{thai_keyword}': {bank_name}")
+                    return bank_name
+        
+        # If still not detected, try to extract from domain
+        domain_match = re.search(r'https?://(?:www\.)?([^/]+)', url)
+        if domain_match:
+            domain = domain_match.group(1)
+            logging.warning(f"⚠️ Could not auto-detect bank. Domain: {domain}")
+            return f"ธนาคาร ({domain})"
         
         return "ธนาคารไม่ระบุ"
 
+
     def setup_driver(self) -> bool:
-        """Setup Selenium WebDriver"""
+
+        """ฟังก์ชันตั้งค่าและเริ่มต้น Selenium WebDriver (Chrome)
+        ตั้งค่า ChromeOptions เพื่อให้ทำงานแบบ Headless (ไม่มีหน้าต่างเบราว์เซอร์) 
+        และเพิ่ม Argument เพื่อหลีกเลี่ยงการถูกตรวจจับว่าเป็น Bot 
+        (เช่น user-agent, excludeSwitches, useAutomationExtension)
+        """
+
         try:
             chrome_options = Options()
             chrome_options.add_argument("--headless")
@@ -85,7 +211,9 @@ class IntelligentKBankScraper:
             chrome_options.add_argument(f"user-agent={random.choice(user_agents)}")
             
             self.driver = webdriver.Chrome(options=chrome_options)
-            self.driver.set_page_load_timeout(60)
+            self.driver.set_page_load_timeout(60) # 60 seconds timeout
+
+            # เรียกใช้ JavaScript เพื่อซ่อน Property navigator.webdriver ซึ่งเป็นอีกวิธีที่เว็บไซต์ใช้ตรวจจับ Selenium
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             logging.info("✅ WebDriver setup completed")
@@ -95,18 +223,21 @@ class IntelligentKBankScraper:
             logging.error(f"❌ Error setting up WebDriver: {e}")
             return False
 
+
     def fetch_page_content(self, url: str, retries: int = 3) -> Optional[str]:
-        """Fetch page content with retry logic"""
+        """ฟังก์ชันสำหรับดึงเนื้อหาหน้าเว็บด้วย Selenium"""
         if self.driver is None:
             if not self.setup_driver():
                 return None
                 
         for attempt in range(retries):
             try:
-                time.sleep(random.uniform(2, 4))
+                time.sleep(random.uniform(2, 4)) # wait before each attempt to avoid detection
                 logging.info(f"🌐 Navigating to {url} (attempt {attempt+1}/{retries})")
                 self.driver.get(url)
                 
+                # รอจนกว่า Element <body/> จะปรากฏ (สูงสุด 20 วินาที) 
+                # เพื่อให้แน่ใจว่าหน้าเว็บเริ่มต้นโหลดแล้ว
                 WebDriverWait(self.driver, 20).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
@@ -114,7 +245,8 @@ class IntelligentKBankScraper:
                 logging.info("⏳ Waiting for content to load...")
                 time.sleep(5)
                 
-                # Scroll to trigger lazy loading
+                # วนลูปสั่งให้เบราว์เซอร์ Scroll ไปยังตำแหน่งต่าง ๆ ของหน้าเว็บ 
+                # เพื่อกระตุ้นการโหลดเนื้อหาแบบ Lazy Loading
                 logging.info("📜 Scrolling to load dynamic content...")
                 for scroll_pct in [0.25, 0.5, 0.75, 1.0]:
                     self.driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight * {scroll_pct});")
@@ -123,7 +255,7 @@ class IntelligentKBankScraper:
                 self.driver.execute_script("window.scrollTo(0, 0);")
                 time.sleep(2)
                 
-                page_source = self.driver.page_source
+                page_source = self.driver.page_source # ดึงเนื้อหา HTML ทั้งหมดของหน้าเว็บที่โหลดเสร็จแล้ว
                 
                 if len(page_source) > 500:
                     logging.info(f"✅ Page fetched successfully ({len(page_source)} chars)")
@@ -138,43 +270,85 @@ class IntelligentKBankScraper:
         logging.error("❌ Failed to fetch page after all retries")
         return None
 
+
     def _is_valid_thai_name(self, text: str) -> bool:
-        """Check if text is a valid Thai executive name - RELAXED VERSION"""
-        if not text or len(text) < 6 or len(text) > 120:
+        """ฟังก์ชันตรวจสอบว่าข้อความเป็นชื่อผู้บริหารไทยที่ถูกต้องหรือไม่"""
+        if not text or len(text) < 6 or len(text) > 90:
             return False
         
-        # Must contain Thai characters (U+0E00 to U+0E7F), spaces, dots, and some punctuation
+        # ตรวจสอบว่าไม่มีมากกว่า 10 คำ (ป้องกันการติดกันของหลายชื่อ)
+        words = text.split()
+        if len(words) > 10:
+            return False
+        
+        # ตรวจสอบว่ามีตัวเลขพุทธศักราช
+        if re.search(r'25\d{2}', text):
+            return False
+        
+        # ตรวจสอบว่าไม่มีอีเมลหรือ URL
+        if '@' in text or 'http' in text.lower() or '.com' in text.lower() or '.th' in text.lower():
+            return False
+        
+        # คำที่ไม่ใช่ชื่อคน
+        invalid_keywords = [
+            'สงวนลิขสิทธิ์', 'ลิขสิทธิ์', 'copyright', '©', 'all rights reserved',
+            'บริษัท', 'บมจ', 'จำกัด', 'มหาชน', 'limited', 'public', 'company',
+            'เว็บไซต์', 'website', 'www.', 'http', '.com', '.th', '.co',
+            'โทร', 'โทรศัพท์', 'telephone', 'tel:', 'email', 'e-mail',
+            'ติดต่อ', 'contact', 'สอบถาม', 'information', 'ข้อมูล',
+            'แผนก', 'ฝ่าย', 'department', 'division', 'section',
+            'เลขที่', 'address', 'ที่อยู่', 'location', 'สถานที่',
+            'วันที่', 'date', 'เวลา', 'time', 'ปี', 'year',
+            'พ.ศ.', 'ค.ศ.', 'a.d.', 'b.e.',
+            'เมนู', 'menu', 'หน้าหลัก', 'home', 'กลับ', 'back',
+            'ค้นหา', 'search', 'ภาษา', 'language', 'ไทย', 'english',
+            'ดาวน์โหลด', 'download', 'pdf', 'print', 'พิมพ์',
+            'เพิ่มเติม', 'more', 'อ่านเพิ่มเติม', 'read more',
+            'ประกาศ', 'announcement', 'ข่าว', 'news',
+            'นโยบาย', 'policy', 'เงื่อนไข', 'terms', 'conditions',
+            'ความเป็นส่วนตัว', 'privacy', 'คุกกี้', 'cookie',
+        ]
+        
+        text_lower = text.lower()
+        for keyword in invalid_keywords:
+            if keyword.lower() in text_lower:
+                return False
+        
+        # ตรวจสอบอักขระพิเศษ
+        special_char_count = sum(1 for char in text if char in '©®™@#$%^&*()_+=[]{}|\\:;"<>,.?/')
+        if special_char_count > 2:
+            return False
+        
+        # ต้องมีอักษรไทยอย่างน้อย 5 ตัว
         thai_char_count = sum(1 for char in text if 0x0E00 <= ord(char) <= 0x0E7F)
-        if thai_char_count < 3:  # At least 3 Thai characters
+        if thai_char_count < 5:
             return False
         
-        # Must start with Thai title or contain common name patterns
-        thai_titles = ['นาย', 'นาง', 'นางสาว', 'ดร.', 'ดร', 'ศ.', 'รศ.', 'ผศ.', 'พันตรี']
+        # ต้องมีคำนำหน้าชื่อที่ถูกต้อง
+        thai_titles = ['นาย', 'นาง', 'นางสาว', 'ดร.', 'ดร', 'ศ.', 'รศ.', 'ผศ.', 'พันตรี', 'พล.', 'พลเอก', 'พลโท', 'พลตรี']
         if not any(text.startswith(title) for title in thai_titles):
-            # Check if it contains common Thai name patterns
             if not any(title in text for title in thai_titles):
                 return False
         
-        # Must have at least 2 words (title + name)
-        words = text.split()
+        # ต้องมีอย่างน้อย 2 คำ (คำนำหน้า + ชื่อ หรือ ชื่อ + นามสกุล)
         if len(words) < 2:
             return False
         
         return True
 
+
     def _is_valid_position(self, text: str) -> bool:
-        """Check if text is a valid position title - RELAXED VERSION"""
+        """Check if text is a valid position title"""
         if not text or len(text) < 2:
             return False
         
-        # Valid position keywords - expanded list
         valid_keywords = [
             'ผู้จัดการ', 'กรรมการ', 'ผู้บริหาร', 'ผู้อำนวยการ', 
             'ประธาน', 'รองประธาน', 'ผู้ช่วย', 'หัวหน้า', 'ผู้ตรวจสอบ',
             'CEO', 'CFO', 'CTO', 'COO', 'President', 'Vice',
             'Executive', 'Director', 'Manager', 'Chief', 'Officer',
             'Assistant', 'Deputy', 'Senior', 'Head', 'Business',
-            'ที่ปรึกษา', 'เลขานุการ', 'คณะกรรมการ', 'บริษัท', 'บริษัท',
+            'ที่ปรึกษา', 'เลขานุการ', 'คณะกรรมการ', 'บริษัท',
             'กลุ่ม', 'ฝ่าย', 'สายงาน', 'แผนก', 'สำนัก', 'กรม', 'กอง',
             'Account', 'Advisor', 'Analyst', 'Audit', 'Bank', 'Board',
             'Business', 'Commercial', 'Company', 'Compliance', 'Control',
@@ -188,8 +362,9 @@ class IntelligentKBankScraper:
         text_lower = text.lower()
         return any(keyword.lower() in text_lower for keyword in valid_keywords)
 
+
     def extract_executives_from_html(self, html_content: str) -> List[Tuple[str, str]]:
-        """Extract executive names and positions directly from HTML - IMPROVED VERSION"""
+        """ฟังก์ชันสำหรับแยกชื่อและตำแหน่งออกจากเนื้อหา HTML"""
         soup = BeautifulSoup(html_content, 'html.parser')
         executives = []
         
@@ -199,159 +374,139 @@ class IntelligentKBankScraper:
         with open("debug_page.html", "w", encoding="utf-8") as f:
             f.write(html_content)
         logging.info("💾 Saved page content to debug_page.html for inspection")
+
+        # ลบ Element ที่ไม่ต้องการออกก่อน
+        for script in soup(["script", "style", "noscript"]):
+            script.decompose()
         
-        # METHOD 1: Look for specific patterns in the page
-        all_text_elements = soup.find_all(text=True)
-        logging.info(f"📝 Total text elements: {len(all_text_elements)}")
+        # METHOD 1.1: Check tables first: วนลูปหาข้อมูลใน Element <table> 
+        # และจับคู่ข้อความที่ผ่าน _is_valid_thai_name กับข้อความใน Cell 
+        # ข้างเคียงที่ผ่าน _is_valid_position
         
-        # Filter and clean text elements
-        cleaned_texts = []
-        for element in all_text_elements:
-            text = element.strip()
-            text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
-            if text and len(text) > 5:  # Only keep substantial text
-                cleaned_texts.append(text)
-        
-        logging.info(f"📝 Cleaned text elements: {len(cleaned_texts)}")
-        
-        # Look for name-position patterns
-        i = 0
-        while i < len(cleaned_texts):
-            current_text = cleaned_texts[i]
-            
-            # If this looks like a name
-            if self._is_valid_thai_name(current_text):
-                name = current_text
-                position = "ไม่ระบุ"
-                
-                # Look ahead for position (next 1-3 elements)
-                for j in range(i+1, min(i+4, len(cleaned_texts))):
-                    candidate = cleaned_texts[j]
-                    if self._is_valid_position(candidate):
-                        position = candidate
-                        break
-                
-                # Add to executives if not duplicate
-                if not any(name == existing_name for existing_name, _ in executives):
-                    executives.append((name, position))
-                    logging.info(f"✅ Found: {name} | {position}")
-                
-                i += 2  # Skip ahead
-                continue
-            
-            i += 1
-        
-        # METHOD 2: Look for specific containers that might hold executive data
-        containers = soup.find_all(['div', 'section', 'article', 'table', 'ul', 'ol'])
-        
-        for container_idx, container in enumerate(containers):
-            container_text = container.get_text(strip=True)
-            if len(container_text) < 20:  # Skip small containers
-                continue
-                
-            # Check if container has executive-like content
-            if any(keyword in container_text for keyword in ['กรรมการ', 'ผู้จัดการ', 'ประธาน', 'Director', 'Manager']):
-                logging.info(f"🔍 Checking container {container_idx+1} with executive keywords")
-                
-                # Extract all text blocks from this container
-                text_blocks = []
-                for element in container.find_all(text=True):
-                    text = element.strip()
-                    if text and len(text) > 5:
-                        text_blocks.append(text)
-                
-                # Process text blocks in this container
-                k = 0
-                while k < len(text_blocks):
-                    text = text_blocks[k]
-                    
-                    if self._is_valid_thai_name(text):
-                        name = text
-                        position = "ไม่ระบุ"
-                        
-                        # Look for position in nearby blocks
-                        for m in range(k+1, min(k+4, len(text_blocks))):
-                            candidate = text_blocks[m]
-                            if self._is_valid_position(candidate):
-                                position = candidate
-                                break
-                        
-                        if not any(name == existing_name for existing_name, _ in executives):
-                            executives.append((name, position))
-                            logging.info(f"✅ Container {container_idx+1}: {name} | {position}")
-                        
-                        k += 2
-                        continue
-                    
-                    k += 1
-        
-        # METHOD 3: Specific table extraction for structured data
         tables = soup.find_all('table')
         logging.info(f"📊 Found {len(tables)} tables")
         
+        # วนลูปตรวจสอบตารางแต่ละตารางที่พบ
         for table_idx, table in enumerate(tables):
-            rows = table.find_all('tr')
-            logging.info(f"  Table {table_idx + 1}: {len(rows)} rows")
-            
-            for row_idx, row in enumerate(rows):
+            rows = table.find_all('tr') # ดึงแถวทั้งหมดในตาราง
+
+            # วนลูปตรวจสอบแต่ละแถว
+            for row in rows:
                 cells = row.find_all(['td', 'th'])
-                row_text = ' '.join(cell.get_text(strip=True) for cell in cells)
-                
-                # Skip header rows
-                if any(header in row_text for header in ['ชื่อ', 'ตำแหน่ง', 'Name', 'Position']):
-                    continue
-                
-                # Process each cell
-                for cell_idx, cell in enumerate(cells):
-                    cell_text = cell.get_text(strip=True)
-                    cell_text = re.sub(r'\s+', ' ', cell_text)
+                if len(cells) >= 2:
+                    # Try to find name and position pairs
+                    cell_texts = [cell.get_text(strip=True) for cell in cells]
+                    # ลบช่องว่างส่วนเกินในข้อความ
+                    cell_texts = [re.sub(r'\s+', ' ', text) for text in cell_texts if text]
                     
-                    if self._is_valid_thai_name(cell_text):
-                        name = cell_text
-                        position = "ไม่ระบุ"
-                        
-                        # Look for position in other cells of the same row
-                        for other_cell in cells:
-                            other_text = other_cell.get_text(strip=True)
-                            if other_text != name and self._is_valid_position(other_text):
-                                position = other_text
-                                break
-                        
-                        if not any(name == existing_name for existing_name, _ in executives):
-                            executives.append((name, position))
-                            logging.info(f"✅ Table {table_idx+1} Row {row_idx+1}: {name} | {position}")
+                    # วนลูปตรวจสอบแต่ละ Cell ในแถว
+                    for i in range(len(cell_texts)):
+                        text = cell_texts[i]
+                        if self._is_valid_thai_name(text):
+                            name = text
+                            position = "ไม่ระบุ"
+                            
+                            # Look for position in adjacent cells
+                            for j in range(len(cell_texts)):
+                                # ข้าม Cell ที่เป็นชื่อเพราะต้องการหาตำแหน่ง
+                                if i != j and self._is_valid_position(cell_texts[j]):
+                                    position = cell_texts[j]
+                                    break
+                            
+                            # ตรวจสอบว่าชื่อนี้ยังไม่เคยถูกบันทึกไว้ใน executives หรือไม่ (ป้องกันชื่อซ้ำ)
+                            if not any(name == existing_name for existing_name, _ in executives):
+                                executives.append((name, position))
+                                logging.info(f"✅ Table: {name} | {position}")
+
+        # METHOD 1.2: Check div/section containers: วนลูปหา Element Container
+        # (div/section/article) ที่มี Class Name ที่บ่งบอกว่าเป็นข้อมูลผู้บริหาร
+        # (เช่น executive, management, board) และพยายามจับคู่ข้อความที่อยู่ติดกัน
+        containers = soup.find_all(['div', 'section', 'article'], 
+                                   class_=re.compile(r'(executive|management|board|director|team|profile|member|card)', re.I))
         
-        # METHOD 4: Look for list items
-        list_items = soup.find_all(['li', 'dt', 'dd'])
+        logging.info(f"📦 Found {len(containers)} potential executive containers")
+        
+        for container in containers:
+            # Extract text from immediate children only (not nested deeply)
+            texts = []
+            # วนลูปตรวจสอบ Element ลูกโดยตรงของ Container
+            for child in container.find_all(recursive=False):
+                child_text = child.get_text(strip=True)
+                if child_text and len(child_text) > 5:
+                    texts.append(re.sub(r'\s+', ' ', child_text))
+            
+            # Also check direct text content
+            for element in container.find_all(['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div']):
+                text = element.get_text(strip=True)
+                if text and len(text) > 5 and len(text) < 150:  # Limit length
+                    text = re.sub(r'\s+', ' ', text)
+                    if text not in texts:
+                        texts.append(text)
+            
+            # Process texts
+            i = 0
+            # วนลูปตรวจสอบข้อความที่ดึงมา
+            while i < len(texts):
+                text = texts[i]
+                # ตรวจสอบว่าข้อความเป็นชื่อผู้บริหารหรือไม่
+                if self._is_valid_thai_name(text):
+                    name = text
+                    position = "ไม่ระบุ"
+                    
+                    # ตรวจสอบข้อความถัดไปเพื่อหาตำแหน่ง
+                    for j in range(i+1, min(i+4, len(texts))):
+                        # หากข้อความถัดไปเป็นตำแหน่งที่ถูกต้องและไม่เป็นชื่อคน ให้กำหนดให้เป็น position
+                        if self._is_valid_position(texts[j]) and not self._is_valid_thai_name(texts[j]):
+                            position = texts[j]
+                            break
+                        
+            
+                    # ตรวจสอบว่าชื่อนี้ยังไม่เคยถูกบันทึกไว้ใน executives หรือไม่ (ป้องกันชื่อซ้ำ)
+                    if not any(name == existing_name for existing_name, _ in executives):
+                        executives.append((name, position)) # เพิ่มชื่อและตำแหน่งลงในรายชื่อผู้บริหาร
+                        logging.info(f"✅ Container: {name} | {position}") 
+                    
+                    # ขยับไปยังข้อความถัดไป
+                    i += 1
+                else: # หากไม่ใช่ชื่อผู้บริหาร ให้ขยับไปยังข้อความถัดไป
+                    i += 1
+        
+        # METHOD 1.3: List items: วนลูปหาข้อมูลใน Element <li> หรือ <dt> 
+        # (รายการ List) และใช้วิธีคล้ายกันในการแยกชื่อและตำแหน่ง
+        list_items = soup.find_all(['li', 'dt'])
         logging.info(f"📋 Found {len(list_items)} list items")
         
-        for item_idx, item in enumerate(list_items):
-            item_text = item.get_text(strip=True)
-            item_text = re.sub(r'\s+', ' ', item_text)
+        # วนลูปตรวจสอบแต่ละรายการใน List
+        for item in list_items:
+            item_text = item.get_text(strip=True) # ดึงข้อความจากรายการ
+            item_text = re.sub(r'\s+', ' ', item_text) # ลบช่องว่างส่วนเกิน
             
-            if self._is_valid_thai_name(item_text):
-                name = item_text
-                position = "ไม่ระบุ"
-                
-                # Look for position in parent or sibling elements
-                parent = item.parent
-                if parent:
-                    parent_text = parent.get_text(strip=True)
-                    # Extract potential position from parent text
-                    lines = parent_text.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if line != name and self._is_valid_position(line):
-                            position = line
+            # แยกข้อความออกจากกันด้วยการขึ้นบรรทัดใหม่ (\n หรือ \r) 
+            # เพื่อจัดการกรณีที่ชื่อและตำแหน่งอยู่ใน Element เดียวกันแต่คั่นด้วยบรรทัดใหม่
+            parts = re.split(r'[\n\r]+', item_text)
+            parts = [p.strip() for p in parts if p.strip()]
+
+            # วนลูปตรวจสอบข้อความที่แยกออกมา
+            for part in parts:
+                if self._is_valid_thai_name(part): # ตรวจสอบว่าข้อความเป็นชื่อผู้บริหารหรือไม่
+                    name = part
+                    position = "ไม่ระบุ"
+                    
+                    # ค้นหาตำแหน่งจากข้อความอื่น ๆ ในรายการเดียวกัน
+                    for other_part in parts:
+                        # ข้ามข้อความที่เป็นชื่อเพราะต้องการหาตำแหน่ง
+                        if other_part != name and self._is_valid_position(other_part):
+                            position = other_part # กำหนดตำแหน่ง
                             break
-                
-                if not any(name == existing_name for existing_name, _ in executives):
-                    executives.append((name, position))
-                    logging.info(f"✅ List item {item_idx+1}: {name} | {position}")
+
+                    # ตรวจสอบว่าชื่อนี้ยังไม่เคยถูกบันทึกไว้ใน executives หรือไม่ (ป้องกันชื่อซ้ำ)
+                    if not any(name == existing_name for existing_name, _ in executives):
+                        executives.append((name, position))
+                        logging.info(f"✅ List: {name} | {position}")
         
         logging.info(f"\n📊 Total executives found: {len(executives)}")
-        
-        # Display first 10 for verification
+
+        # แสดงผล 10 รายการแรก for debugging
         if executives:
             logging.info("\n🔍 First 10 executives found:")
             for i, (name, position) in enumerate(executives[:10]):
@@ -359,9 +514,9 @@ class IntelligentKBankScraper:
         
         return executives
 
+    # ฟังก์ชันแยกองค์ประกอบชื่อ
     def _parse_name_components(self, full_name: str) -> Tuple[str, str, str, str]:
-        """Parse name into prefix, first name, and surname - FIXED VERSION"""
-        # Comprehensive title mapping
+        """Parse name into prefix, first name, and surname"""
         title_map = {
             "นาย": "Mr.",
             "นาง": "Mrs.",
@@ -374,73 +529,85 @@ class IntelligentKBankScraper:
             "พันตรี": "Lt."
         }
         
-        # Find and extract prefix
         prefix = ""
         name_without_prefix = full_name
         
-        # Sort by length (longest first) to catch compound titles like "นางสาว"
+        # วนลูปเพื่อตรวจจับและดึงคำนำหน้าออกจากชื่อเต็ม
         for thai_title, eng_title in sorted(title_map.items(), key=lambda x: len(x[0]), reverse=True):
             if full_name.startswith(thai_title):
                 prefix = eng_title
                 name_without_prefix = full_name[len(thai_title):].strip()
                 break
         
-        # If no prefix found but name contains Thai characters, check for embedded titles
+        # กรณีที่คำนำหน้าไม่ได้อยู่ต้นชื่อ (เช่น "สมชาย นาย ใจดี")
         if not prefix and any(0x0E00 <= ord(char) <= 0x0E7F for char in full_name):
             for thai_title, eng_title in title_map.items():
-                if thai_title in full_name and full_name.index(thai_title) < 10:  # Title in first 10 chars
+                if thai_title in full_name and full_name.index(thai_title) < 10:
                     prefix = eng_title
-                    # Remove the title from anywhere in the name
                     name_without_prefix = full_name.replace(thai_title, '').strip()
                     break
         
-        # Clean up the name (remove extra spaces)
         name_without_prefix = re.sub(r'\s+', ' ', name_without_prefix).strip()
         
-        # Split into name parts
+        # แยกชื่อที่ไม่มีคำนำหน้าออกเป็นส่วนต่าง ๆ เพื่อหาชื่อจริง (parts[0]) และนามสกุล (parts[1:])
         parts = name_without_prefix.split()
         
         if len(parts) == 0:
-            return prefix, full_name, "", ""  # Return original if no parts
+            return prefix, full_name, "", ""
         elif len(parts) == 1:
-            return prefix, full_name, parts[0], ""  # Single name part
+            return prefix, full_name, parts[0], ""
         elif len(parts) == 2:
-            return prefix, full_name, parts[0], parts[1]  # First + Last name
+            return prefix, full_name, parts[0], parts[1]
         else:
-            # For multiple parts: first word is first name, rest is surname
             first_name = parts[0]
             surname = " ".join(parts[1:])
             return prefix, full_name, first_name, surname
 
+
     def create_executive_records(self, executives: List[Tuple[str, str]]) -> List[Dict]:
-        """Create structured records from executive tuples - FIXED VERSION"""
+        """ฟังก์ชันสำหรับสร้าง List ของ Dictionary (Records) จากข้อมูล Tuple ที่ได้จากการ Scrape"""
         records = []
         seen_names = set()
         
-        logging.info("\n📝 Creating executive records...")
+        logging.info("\n🔍 Creating executive records...")
         
+        #กันชื่อซ้ำ
         for name, position in executives:
-            # Skip duplicates (exact match only)
             if name in seen_names:
                 logging.debug(f"  ⚠️ Skipping duplicate: {name}")
                 continue
             
-            # Parse name components using the fixed function
+            # Additional filtering for non-name texts
+            name_lower = name.lower()
+            skip_keywords = ['สงวนลิขสิทธิ์', 'ลิขสิทธิ์', 'บมจ', 'บริษัท', 'copyright', '©']
+            if any(keyword in name_lower for keyword in skip_keywords):
+                logging.debug(f"  ⚠️ Skipping non-name text: {name}")
+                continue
+            
+            # Check for year
+            if re.search(r'25\d{2}', name):
+                logging.debug(f"  ⚠️ Skipping text with year: {name}")
+                continue
+            
+            # เรียกใช้ฟังก์ชันแยกองค์ประกอบชื่อ
             prefix, full_name, first_name, surname = self._parse_name_components(name)
             
             if not first_name:
                 logging.warning(f"  ⚠️ Could not parse name: {name}")
-                # Still create record but with original name
-                first_name = name
-                surname = ""
+                continue
             
-            # Create record with CORRECT column mapping
+            # Validate name length
+            if len(first_name) < 2 or len(first_name) > 50:
+                logging.debug(f"  ⚠️ Invalid name length: {first_name}")
+                continue
+            
+            # สร้าง Dictionary Record ที่มี Field ข้อมูลที่ต้องการ 7 Field
             record = {
                 "BUSI_DT": self.busi_dt,
-                "Prefixed_Name": prefix,  # English prefix (Mr., Mrs., Dr., etc.)
-                "Full_Name": full_name,   # Original Thai full name with prefix
-                "First_Name": first_name, # Thai first name without prefix
-                "Surname": surname,       # Thai surname
+                "Prefixed_Name": prefix,
+                "Full_Name": full_name,
+                "First_Name": first_name,
+                "Surname": surname,
                 "Bank_Name": self.bank_name,
                 "Position": position
             }
@@ -449,7 +616,6 @@ class IntelligentKBankScraper:
             seen_names.add(name)
             logging.info(f"  ✅ {prefix} | {first_name} {surname} | {position}")
         
-        # Debug: Show first few records to verify structure
         if records:
             logging.info("\n🔍 First 3 records structure:")
             for i, record in enumerate(records[:3]):
@@ -457,8 +623,9 @@ class IntelligentKBankScraper:
         
         return records
 
+
+    # Main scraping function
     def intelligent_scrape(self, limit: int = 150) -> List[Dict]:
-        """Main scraping function"""
         logging.info("🚀 Starting scraping process...")
         
         # Fetch page
@@ -468,7 +635,7 @@ class IntelligentKBankScraper:
             return []
         
         # Detect bank
-        self.bank_name = self.detect_bank_name(self.base_url)
+        self.bank_name = self.detect_bank_name(self.base_url, html_content)
         logging.info(f"🏦 Bank: {self.bank_name}")
         logging.info(f"📅 Business Date: {self.busi_dt}")
         
@@ -483,7 +650,7 @@ class IntelligentKBankScraper:
         records = self.create_executive_records(executives)
         
         logging.info(f"\n📊 Total records created: {len(records)}")
-        return records[:limit]
+        return records[:limit] # ส่งคืน Records ที่สร้างเสร็จแล้ว (จำกัดจำนวน Record ไม่เกิน 150)
 
     def close(self):
         """Close WebDriver"""
@@ -495,6 +662,7 @@ class IntelligentKBankScraper:
             logging.error(f"⚠️ Error closing WebDriver: {e}")
 
 
+
 def save_to_csv(data: List[Dict], bank_name: str, busi_dt: str) -> bool:
     """Save data to CSV with proper formatting"""
     if not data:
@@ -502,24 +670,48 @@ def save_to_csv(data: List[Dict], bank_name: str, busi_dt: str) -> bool:
         return False
 
     try:
-        # Create DataFrame
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(data) # Create Pandas DataFrame from list of dictionaries
         
-        # Ensure column order - FIXED to match our record structure
+
+        # กำหนดและจัดเรียงลำดับ Column ให้ถูกต้อง
         column_order = ['BUSI_DT', 'Prefixed_Name', 'Full_Name', 
                        'First_Name', 'Surname', 'Bank_Name', 'Position']
         
-        # Make sure all columns exist
         for col in column_order:
             if col not in df.columns:
-                df[col] = ""  # Add missing columns
+                df[col] = ""
         
-        df = df[column_order]  # Reorder columns
+        df = df[column_order]
         
-        # Create filename
+        # Clean bank name for filename
         bank_short = bank_name.replace('ธนาคาร', '').strip()
-        year_month = busi_dt[:7].replace('-', '')
-        filename = f"{bank_short}_{year_month}.csv"
+        
+        """
+        แปลงชื่อธนาคารภาษาไทยให้เป็นชื่อย่อภาษาอังกฤษ (เช่น 'ธนาคารกสิกรไทย' เป็น 'Kbank') 
+        เพื่อใช้ในการตั้งชื่อไฟล์ CSV (เช่น Kbank_20251028.csv)
+        """
+
+        bank_name_map = {
+            'กสิกรไทย': 'Kbank',
+            'กรุงเทพ': 'Bangkok',
+            'ไทยพาณิชย์': 'SCB',
+            'กรุงไทย': 'Krungthai',
+            'กรุงศรีอยุธยา': 'Krungsri',
+            'ออมสิน': 'GSB',
+            'ทหารไทยธนชาต': 'TTB',
+            'เกียรตินาคินภัทร': 'KKP',
+            'ธนชาต': 'Thanachart',
+            'ทิสโก้': 'TISCO',
+        }
+        
+        file_bank_name = bank_short
+        for thai_name, eng_name in bank_name_map.items():
+            if thai_name in bank_short:
+                file_bank_name = eng_name
+                break
+        
+        date_str = busi_dt.replace('-', '')
+        filename = f"{file_bank_name}_{date_str}.csv"
         
         # Create output directory
         os.makedirs('output', exist_ok=True)
@@ -531,7 +723,6 @@ def save_to_csv(data: List[Dict], bank_name: str, busi_dt: str) -> bool:
         logging.info(f"\n✅ File saved: {output_path}")
         logging.info(f"📊 Total records: {len(df)}")
         
-        # Display results with better formatting
         print("\n" + "="*120)
         print(f"📊 RESULTS FOR {bank_name}")
         print(f"📅 Date: {busi_dt}")
@@ -539,10 +730,8 @@ def save_to_csv(data: List[Dict], bank_name: str, busi_dt: str) -> bool:
         print(f"📈 Records: {len(df)}")
         print("="*120)
         
-        # Show sample of data to verify column alignment
         print("\n📋 SAMPLE DATA (first 5 records):")
         sample_df = df.head().copy()
-        # Ensure proper display of Thai text
         pd.set_option('display.unicode.east_asian_width', True)
         pd.set_option('display.max_colwidth', 30)
         print(sample_df.to_string(index=False))
@@ -561,54 +750,97 @@ def save_to_csv(data: List[Dict], bank_name: str, busi_dt: str) -> bool:
 def main():
     """Main execution"""
     print("="*120)
-    print("🤖 BANK EXECUTIVE SCRAPER - FIXED NAME PARSING VERSION")
+    print("🤖 IMPROVED BANK EXECUTIVE SCRAPER v2.0")
     print("="*120)
-    print("✅ Fixed prefix detection for all Thai titles")
-    print("✅ Correct column alignment")
-    print("✅ Better name parsing logic")
+    print("✅ Better HTML structure handling")
+    print("✅ Improved name/position separation")
+    print("✅ Prevents concatenated names issue")
+    print("✅ Works with various website structures")
     print("="*120 + "\n")
     
-    scraper = None
+    # List of URLs to scrape
+    urls = [
+        "https://www.bangkokbank.com/th-TH/About-Us/Board-Directors"
+        ]
     
-    try:
-        scraper = IntelligentKBankScraper()
+    print("📋 URLs to scrape:")
+    for i, url in enumerate(urls, 1):
+        print(f"  {i}. {url}")
+    print()
+    
+    all_results = []
+    
+    """ 
+    วนลูปเรียกใช้ Class FlexibleBankScraper และเรียกใช้ฟังก์ชัน 
+    intelligent_scrape() เพื่อดึงข้อมูลสำหรับแต่ละ URL
+    """
+    for url in urls:
+        print(f"\n{'='*120}")
+        print(f"🌐 Processing: {url}")
+        print(f"{'='*120}\n")
         
-        print(f"🌐 Target URL: {scraper.base_url}")
-        print(f"📅 Date: {scraper.busi_dt}\n")
+        scraper = None
         
-        # Run scraping
-        executives = scraper.intelligent_scrape()
-        
-        if executives:
-            # Save to CSV
-            save_to_csv(executives, scraper.bank_name, scraper.busi_dt)
-            print(f"\n✅ SUCCESS: Extracted {len(executives)} executives")
+        try:
+            scraper = FlexibleBankScraper(url)
             
-            # Additional verification
-            print(f"\n🔍 VERIFICATION:")
-            print(f"   - First names should be in 'First_Name' column")
-            print(f"   - Last names should be in 'Surname' column") 
-            print(f"   - English prefixes should be in 'Prefixed_Name' column")
-            print(f"   - Full Thai names should be in 'Full_Name' column")
+            print(f"🌐 Target URL: {url}")
+            print(f"📅 Date: {scraper.busi_dt}")
             
-        else:
-            print("\n❌ FAILED: No executives found")
-        
-    except KeyboardInterrupt:
-        print("\n⚠️ Interrupted by user")
-    except Exception as e:
-        logging.error(f"❌ Error in main: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        if scraper:
-            try:
-                scraper.close()
-            except:
-                pass
-        print("\n" + "="*120)
-        print("🏁 SCRAPING COMPLETED")
-        print("="*120)
+            temp_bank = scraper.detect_bank_name(url, None)
+            print(f"🏦 Initial bank detection: {temp_bank}\n")
+            
+            # Run scraping
+            executives = scraper.intelligent_scrape()
+            
+            if executives:
+                print(f"\n🏦 Final detected bank: {scraper.bank_name}")
+                
+                # Save to CSV
+                if save_to_csv(executives, scraper.bank_name, scraper.busi_dt):
+                    print(f"\n✅ SUCCESS: Extracted {len(executives)} executives from {scraper.bank_name}")
+                    all_results.append({
+                        'bank': scraper.bank_name,
+                        'count': len(executives),
+                        'url': url
+                    })
+                else:
+                    print(f"\n⚠️ WARNING: Data extracted but failed to save CSV")
+            else:
+                print(f"\n❌ FAILED: No executives found for {url}")
+            
+        except KeyboardInterrupt:
+            print("\n⚠️ Interrupted by user")
+            break
+        except Exception as e:
+            logging.error(f"❌ Error processing {url}: {e}")
+            import traceback
+            traceback.print_exc()
+        finally: # Ensure WebDriver is closed
+            if scraper:
+                try:
+                    scraper.close()
+                except:
+                    pass
+    
+    # Summary
+    print("\n" + "="*120)
+    print("📋 SCRAPING SUMMARY")
+    print("="*120)
+    
+    if all_results:
+        print(f"\n✅ Successfully scraped {len(all_results)} bank(s):\n")
+        for i, result in enumerate(all_results, 1):
+            print(f"  {i}. {result['bank']}: {result['count']} executives")
+            print(f"     URL: {result['url']}\n")
+    else:
+        print("\n❌ No banks were successfully scraped")
+    
+    print("="*120)
+    print("\n💡 TIP: Check the 'output' folder for generated CSV files")
+    print("💡 TIP: Check 'debug_page.html' if you need to inspect the page structure")
+    print("💡 TIP: The improved version prevents name concatenation issues")
+    print("="*120 + "\n")
 
 
 if __name__ == "__main__":
