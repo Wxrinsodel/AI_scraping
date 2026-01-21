@@ -839,12 +839,10 @@ def save_to_csv(data: List[Dict], bank_name: str, busi_dt: str) -> bool:
             'First_Name', 'Surname', 'Bank_Name', 'Position'
         ]
         
-        # ตรวจสอบว่าคอลัมน์ครบไหม ถ้าไม่ครบให้สร้างว่างๆ ไว้ก่อนกัน Error
         for col in column_order_save:
             if col not in df.columns:
                 df[col] = ""
         
-        # 2. จัดการเรื่องชื่อไฟล์
         bank_short = bank_name.replace('ธนาคาร', '').strip()
         bank_name_map = {
             'กสิกรไทย': 'Kbank', 'กรุงเทพ': 'Bangkok', 'ไทยพาณิชย์': 'SCB',
@@ -864,20 +862,17 @@ def save_to_csv(data: List[Dict], bank_name: str, busi_dt: str) -> bool:
         os.makedirs('output', exist_ok=True)
         output_path = os.path.join('output', filename)
         
-        # 3. สร้างส่วน Footer (บรรทัดสุดท้ายที่บอก URL)
         source_url = data[0].get('Source_URL', 'URL ไม่ระบุ') if data else "URL ไม่ระบุ"
-        
-        # แก้ไขตรงนี้: ใช้ชื่อคอลัมน์ที่มีอยู่จริงใน column_order_save
+    
         footer_row = {col: "" for col in column_order_save}
         footer_row['BUSI_DT'] = 'Source_URL:'
-        footer_row['Eng_Prefix'] = source_url # ใส่ URL ไว้ในคอลัมน์ที่สองต่อจากคำว่า Source_URL:
+        footer_row['Eng_Prefix'] = source_url
         
         df_footer = pd.DataFrame([footer_row])
         
         # 4. รวมข้อมูล (Data + Footer) และเลือกเฉพาะคอลัมน์ที่กำหนด
         df_final = pd.concat([df[column_order_save], df_footer], ignore_index=True)
         
-        # 5. บันทึกไฟล์
         df_final.to_csv(output_path, index=False, encoding='utf-8-sig', quoting=csv.QUOTE_ALL)
         
         print("\n" + "="*120)
@@ -926,8 +921,8 @@ def main():
         try:
             scraper = FlexibleBankScraper(url)
             
-            print(f"🌐 Target URL: {url}")
-            print(f"📅 Date: {scraper.busi_dt}")
+            print(f" Target URL: {url}")
+            print(f" Date: {scraper.busi_dt}")
             
             html_content = scraper.fetch_page_content(url)
             if not html_content:

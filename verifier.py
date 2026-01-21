@@ -18,7 +18,7 @@ class Verifier:
     def __init__(self, ollama_url: str = OLLAMA_API_URL, model: str = OLLAMA_MODEL):
         self.ollama_url = ollama_url
         self.model = model
-        logger.info(f"🧠 Verifier initialized: Model={self.model}, API={self.ollama_url}")
+        logger.info(f" ---- Verifier initialized: Model={self.model}, API={self.ollama_url} ---- ")
 
     def _format_scraped_data(self, scraped_data: List[Dict]) -> str:
         """จัดรูปแบบข้อมูลที่ Scrape มาให้ LLM อ่านง่าย"""
@@ -122,7 +122,7 @@ class Verifier:
             }
         }
 
-        logger.info("⏳ Sending data to Ollama for verification...")
+        logger.info(" ---- Sending data to Ollama for verification... ---- ")
         
         try:
             response = requests.post(self.ollama_url, json=payload, timeout=180)
@@ -132,11 +132,11 @@ class Verifier:
             result = json.loads(result_text)
             result = self._validate_and_clean_result(result)
             
-            logger.info("✅ Ollama verification completed.")
+            logger.info(" ---- Ollama verification completed. ----")
             return result
 
         except Exception as e:
-            logger.error(f"❌ Ollama API Error: {e}")
+            logger.error(f" ---- Ollama API Error: {e} ---- ")
             return {"error": str(e), "is_complete": False, "missing_names": [], "extra_names": []}
 
     def _validate_and_clean_result(self, result: Dict) -> Dict:
